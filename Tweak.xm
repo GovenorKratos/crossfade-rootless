@@ -35,11 +35,11 @@ CRHelper *_helper = nil;
 		AVPlayerItem *current = bself.currentItem;
 
 		if (current && prefsEnabled) {
-			NSLog(@"crossfade: Time to fade!");
+			// NSLog(@"crossfade: Time to fade!"); commented out bloatware :)
 
-			//We have to set this :( it breaks lots of other things like lockscreen music controls etc.
-			UInt32 setProperty = 1;
-			AudioSessionSetProperty(kAudioSessionProperty_OverrideCategoryMixWithOthers, sizeof(setProperty), &setProperty);
+			// I had to comment this code by h6nry out to make it work for iOS 16 just these 2 lines below
+			//UInt32 setProperty = 1;
+			//AudioSessionSetProperty(kAudioSessionProperty_OverrideCategoryMixWithOthers, sizeof(setProperty), &setProperty);
 
 			//Set up the cross-fade player. We need a second player due to the serial anatomy of an AVQueuePlayer, which is being used for playback in the music app.
 			AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:[(AVURLAsset *)current.asset URL] error:NULL];
@@ -112,19 +112,22 @@ CRHelper *_helper = nil;
 	NSArray *audioTracks = [bself.currentItem.asset tracksWithMediaType:AVMediaTypeAudio];
 	NSMutableArray *allAudioParams = [NSMutableArray array];
 
-	for (AVAssetTrack *track in audioTracks) {
-		AVMutableAudioMixInputParameters *audioInputParams = [AVMutableAudioMixInputParameters audioMixInputParameters];
-		[audioInputParams setVolume:0.0f atTime:CMTimeMakeWithSeconds(0, 1)];
-		[audioInputParams setVolume:0.2f atTime:CMTimeMakeWithSeconds(2, 1)];
-		[audioInputParams setVolume:0.4f atTime:CMTimeMakeWithSeconds(4, 1)];
-		[audioInputParams setVolume:0.6f atTime:CMTimeMakeWithSeconds(6, 1)];
-		[audioInputParams setVolume:0.8f atTime:CMTimeMakeWithSeconds(8, 1)];
-		[audioInputParams setVolume:1.0f atTime:CMTimeMakeWithSeconds(10, 1)];
+    for (AVAssetTrack *track in audioTracks) {
+        // Create audio mix input parameters for the current audio track
+        AVMutableAudioMixInputParameters *audioInputParams = [AVMutableAudioMixInputParameters audioMixInputParameters];
+        
+        // Set a smooth volume ramp from 0.0 to 1.0 over 7 seconds
+        [audioInputParams setVolumeRampFromStartVolume:0.05
+                                        toEndVolume:1.0
+                                            timeRange:CMTimeRangeMake(CMTimeMakeWithSeconds(0, 1), CMTimeMakeWithSeconds(7, 1))];
+        
+        // Assign the track's ID to the audio mix parameters
+        [audioInputParams setTrackID:[track trackID]];
+        
+        // Add the audio mix parameters to the collection
+        [allAudioParams addObject:audioInputParams];
+    } // This part was added by ChatGPT - it makes the ramp smoother
 
-		[audioInputParams setTrackID:[track trackID]];
-
-		[allAudioParams addObject:audioInputParams];
-	}
 
 	AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
 	[audioMix setInputParameters:allAudioParams];
@@ -146,7 +149,7 @@ static void prefsChangedCallback(CFNotificationCenterRef center, void *observer,
 	if (value == nil || [value isEqual:@YES]) {
 		prefsEnabled = YES;
 	} else {
-		prefsEnabled = NO;
+		prefsEnabled = YES; //changed to yes instead of relying on the prefs - which I couldn't get to work :(
 	}
 }
 

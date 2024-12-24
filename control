@@ -1,9 +1,9 @@
 Package: org.h6nry.crossfade
 Name: crossfade
 Depends: mobilesubstrate
-Version: 1.0
+Version: 2.0
 Architecture: iphoneos-arm
-Description: Crossfade. In your music app.
+Description: Crossfade. In your music app. Fixed to work on iOS 16 by GovenorKratos, very janky.
 Maintainer: H6nry <henry.anonym@gmail.com>
 Author: H6nry <henry.anonym@gmail.com>
 Section: Tweaks
