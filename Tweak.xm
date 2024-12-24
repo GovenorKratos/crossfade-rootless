@@ -1,9 +1,9 @@
 #import <CoreMedia/CoreMedia.h>
 #import <AVFoundation/AVFoundation.h>
 
-
 @interface CRHelper : NSObject
 -(void) synchronizeTimesFromCurrent:(NSDictionary *)timer;
+-(void) fadeOutPlayingItem:(AVQueuePlayer *)player;
 @end
 
 static void prefsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo);
@@ -12,157 +12,158 @@ BOOL prefsEnabled;
 id observerToRetain = nil;
 CRHelper *_helper = nil;
 
-
 %group main
 
 %hook AVQueuePlayer
 - (void)insertItem:(AVPlayerItem *)itemn afterItem:(id)arg2 {
-	//The caller of this method only inserts 2 items at most: The current song, and the next song.
-	%orig;
+    %orig;
 
-	if (observerToRetain) [self removeTimeObserver:observerToRetain]; //Remove any observers. This was recommended somewhere around the internet.
+    if (observerToRetain) {
+        [self removeTimeObserver:observerToRetain]; // Remove any previous observers.
+    }
 
-	//Calculate the time when an observer block shall be called.
-	Float64 duration = CMTimeGetSeconds(self.currentItem.asset.duration);
-	CMTime time = CMTimeMakeWithSeconds(duration-10-2, 600);
-	NSArray *times = [NSArray arrayWithObject:[NSValue valueWithCMTime:time]];
+    Float64 duration = CMTimeGetSeconds(self.currentItem.asset.duration);
+    CMTime time = CMTimeMakeWithSeconds(duration - 10, 600);
+    NSArray *times = @[ [NSValue valueWithCMTime:time] ];
 
-	__block AVQueuePlayer *bself = self; //Make self ready for dispatch.
+    __block AVQueuePlayer *bself = self;
 
-	//Add the observer.
-	observerToRetain = [self addBoundaryTimeObserverForTimes:times queue:NULL usingBlock:^(void) {
-		//When the current song (current) passed its duration minus 12 seconds.
-		AVPlayerItem *current = bself.currentItem;
+    observerToRetain = [self addBoundaryTimeObserverForTimes:times queue:NULL usingBlock:^{
+        AVPlayerItem *current = bself.currentItem;
 
-		if (current && prefsEnabled) {
-			// NSLog(@"crossfade: Time to fade!"); commented out bloatware :)
+        if (current && prefsEnabled) {
+            AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:[(AVURLAsset *)current.asset URL] error:NULL];
+            Float64 toSeek = CMTimeGetSeconds(current.currentTime) + 2.0f;
+            player.currentTime = toSeek;
+            [player prepareToPlay];
+            [player playAtTime:player.deviceCurrentTime + 2.0f];
+            player.volume = 1.0f;
 
-			// I had to comment this code by h6nry out to make it work for iOS 16 just these 2 lines below
-			//UInt32 setProperty = 1;
-			//AudioSessionSetProperty(kAudioSessionProperty_OverrideCategoryMixWithOthers, sizeof(setProperty), &setProperty);
+            NSDictionary *userInfo = @{
+                @"player": player,
+                @"current": current,
+                @"bself": bself,
+                @"toSeek": @(toSeek)
+            };
 
-			//Set up the cross-fade player. We need a second player due to the serial anatomy of an AVQueuePlayer, which is being used for playback in the music app.
-			AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithContentsOfURL:[(AVURLAsset *)current.asset URL] error:NULL];
-			Float64 toSeek = CMTimeGetSeconds(current.currentTime)+2.0f; //Advance everything +2 seconds, so the system has the chance to preload everything.
-			player.currentTime = toSeek;
-			[player prepareToPlay];
-			[player playAtTime:player.deviceCurrentTime+2.0f]; //Play precisely at this time.
-			player.volume = 1.0f;
+            if (_helper == nil) {
+                _helper = [[CRHelper alloc] init];
+            }
 
-			NSDictionary *userInfo = @{
-										@"player" : player,
-										@"current" : current,
-										@"bself" : bself,
-										@"toSeek" : [NSNumber numberWithFloat:toSeek]
-										};
-			if (_helper == nil) _helper = [[CRHelper alloc] init];
-
-			[NSThread detachNewThreadSelector:@selector(synchronizeTimesFromCurrent:) toTarget:_helper withObject:userInfo]; //Dispatch blocking tasks into a second thread.
-		}
-	}];
+            [_helper fadeOutPlayingItem:bself]; // Fade out the currently playing item.
+            [NSThread detachNewThreadSelector:@selector(synchronizeTimesFromCurrent:) toTarget:_helper withObject:userInfo];
+        }
+    }];
 }
 %end
 
-
 @implementation CRHelper
+// Synchronize playback for crossfade
 -(void) synchronizeTimesFromCurrent:(NSDictionary *)timer {
-	NSDictionary *players = timer;
+    NSDictionary *players = timer;
 
-	AVAudioPlayer *player = players[@"player"];
-	AVPlayerItem *current = players[@"current"];
-	AVQueuePlayer *bself = players[@"bself"];
-	Float64 toSeek = [players[@"toSeek"] floatValue];
+    AVAudioPlayer *player = players[@"player"];
+    AVPlayerItem *current = players[@"current"];
+    AVQueuePlayer *bself = players[@"bself"];
+    Float64 toSeek = [players[@"toSeek"] floatValue];
 
-	BOOL madeFade = NO;
-	//Block anything until a break occurs (the case when the cross-player has finished playing its last seconds).
-	while (1) {
-		if ([bself.currentItem isEqual:current] && player.currentTime > toSeek+0.01) { //The cross-player is playing now. The queue-player has not advanced to the next item yet.
-			//Advance to the next song, the cross-player is playing the current song now
-			[bself performSelectorOnMainThread:@selector(advanceToNextItem) withObject:nil waitUntilDone:YES];
-		}
+    BOOL madeFade = NO;
 
-		if (![bself.currentItem isEqual:current] && player.currentTime > toSeek+0.01) { //The cross-player is playing now. The queue-player advanced to the next item.
-			//Fade out the cross-player (old song).
-			Float64 timeout = player.currentTime-toSeek;
-			if (timeout < 0.0f) timeout = 0.0f;
-			if (timeout > 10.0f) timeout = 10.0f;
+    while (1) {
+        if ([bself.currentItem isEqual:current] && player.currentTime > toSeek + 0.01) {
+            [bself performSelectorOnMainThread:@selector(advanceToNextItem) withObject:nil waitUntilDone:YES];
+        }
 
-			Float64 outVolume = (10.f-timeout)/10.0f;
-			player.volume = outVolume;
+        if (![bself.currentItem isEqual:current] && player.currentTime > toSeek + 0.01) {
+            Float64 timeout = player.currentTime - toSeek;
+            if (timeout < 0.0f) timeout = 0.0f;
+            if (timeout > 7.0f) timeout = 7.0f;
 
-			//Fade in the queue-player (new song).
-			if (madeFade == NO) {
-				[self performSelectorOnMainThread:@selector(makeFadeIn:) withObject:bself waitUntilDone:YES];
-				madeFade = YES;
-			}
-		}
+            Float64 outVolume = (7.0f - timeout) / 7.0f;
+            player.volume = outVolume;
 
-		if (player.currentTime == 0.0f) {
-			break;
-		}
+            if (madeFade == NO) {
+                [self performSelectorOnMainThread:@selector(makeFadeIn:) withObject:bself waitUntilDone:YES];
+                madeFade = YES;
+            }
+        }
 
-		[NSThread sleepForTimeInterval:0.1];
-	}
+        if (player.currentTime == 0.0f) {
+            break;
+        }
 
-	NSLog(@"crossfade: Faded!");
+        [NSThread sleepForTimeInterval:0.1];
+    }
 }
 
 -(void) makeFadeIn:(AVQueuePlayer *)bself {
-	//Magic. Configure the current item to fade in. Doing this via an AVAudioMix.
-	NSArray *audioTracks = [bself.currentItem.asset tracksWithMediaType:AVMediaTypeAudio];
-	NSMutableArray *allAudioParams = [NSMutableArray array];
+    NSArray *audioTracks = [bself.currentItem.asset tracksWithMediaType:AVMediaTypeAudio];
+    NSMutableArray *allAudioParams = [NSMutableArray array];
 
     for (AVAssetTrack *track in audioTracks) {
-        // Create audio mix input parameters for the current audio track
+        AVMutableAudioMixInputParameters *audioInputParams = [AVMutableAudioMixInputParameters audioMixInputParameters];
+        [audioInputParams setVolumeRampFromStartVolume:0.0
+                                           toEndVolume:1.0
+                                              timeRange:CMTimeRangeMake(CMTimeMakeWithSeconds(0, 1), CMTimeMakeWithSeconds(7, 1))];
+        [audioInputParams setTrackID:[track trackID]];
+        [allAudioParams addObject:audioInputParams];
+    }
+
+    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+    [audioMix setInputParameters:allAudioParams];
+    [bself.currentItem setAudioMix:audioMix];
+}
+
+// New fade out function for the current song hopefully
+-(void) fadeOutPlayingItem:(AVQueuePlayer *)bself {
+    // Get the total duration of the song
+    CMTime totalDuration = bself.currentItem.asset.duration;
+    
+    // Calculate when the fade-out should start, i.e., 7 seconds before the end
+    // Add a buffer, let's say, 1-2 seconds before the fade-out starts
+    CMTime fadeOutStartTime = CMTimeSubtract(totalDuration, CMTimeMakeWithSeconds(8, 600));  // 7 seconds fade + 1 second buffer
+    
+    NSArray *audioTracks = [bself.currentItem.asset tracksWithMediaType:AVMediaTypeAudio];
+    NSMutableArray *allAudioParams = [NSMutableArray array];
+
+    for (AVAssetTrack *track in audioTracks) {
         AVMutableAudioMixInputParameters *audioInputParams = [AVMutableAudioMixInputParameters audioMixInputParameters];
         
-        // Set a smooth volume ramp from 0.0 to 1.0 over 7 seconds
-        [audioInputParams setVolumeRampFromStartVolume:0.05
-                                        toEndVolume:1.0
-                                            timeRange:CMTimeRangeMake(CMTimeMakeWithSeconds(0, 1), CMTimeMakeWithSeconds(7, 1))];
-        
-        // Assign the track's ID to the audio mix parameters
+        // Set the fade-out to go from full volume to 0, starting at fadeOutStartTime and lasting 7 seconds
+        [audioInputParams setVolumeRampFromStartVolume:1.0
+                                           toEndVolume:0.0
+                                              timeRange:CMTimeRangeMake(fadeOutStartTime, CMTimeMakeWithSeconds(7, 600))];
         [audioInputParams setTrackID:[track trackID]];
-        
-        // Add the audio mix parameters to the collection
         [allAudioParams addObject:audioInputParams];
-    } // This part was added by ChatGPT - it makes the ramp smoother
+    }
 
-
-	AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
-	[audioMix setInputParameters:allAudioParams];
-	[bself.currentItem setAudioMix:audioMix];
+    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+    [audioMix setInputParameters:allAudioParams];
+    [bself.currentItem setAudioMix:audioMix];
 }
+
 @end
 
 %end
 
-
 static void prefsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-	//Load ...blahbah... update ...blahblah...
-	NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/org.h6nry.crossfade-musicprefs-hook.plist"];
-	if (prefs == nil) {
-		prefs = [NSDictionary dictionary];
-	}
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/org.h6nry.crossfade-musicprefs-hook.plist"];
+    if (prefs == nil) {
+        prefs = [NSDictionary dictionary];
+    }
 
-	id value = [prefs objectForKey:@"MusicCrossfadeEnabledSetting"];
-	if (value == nil || [value isEqual:@YES]) {
-		prefsEnabled = YES;
-	} else {
-		prefsEnabled = YES; //changed to yes instead of relying on the prefs - which I couldn't get to work :(
-	}
+    id value = [prefs objectForKey:@"MusicCrossfadeEnabledSetting"];
+    prefsEnabled = (value == nil || [value isEqual:@YES]);
 }
 
-
 %ctor {
-	//Register for settings change notifications.
-	CFStringRef notificationName = CFSTR("org.h6nry.crossfade/prefs-changed");
-	CFNotificationCenterRef notificationCenter = CFNotificationCenterGetDarwinNotifyCenter();
-	CFNotificationCenterAddObserver(notificationCenter, NULL, prefsChangedCallback, notificationName, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    CFStringRef notificationName = CFSTR("org.h6nry.crossfade/prefs-changed");
+    CFNotificationCenterRef notificationCenter = CFNotificationCenterGetDarwinNotifyCenter();
+    CFNotificationCenterAddObserver(notificationCenter, NULL, prefsChangedCallback, notificationName, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 
-	prefsChangedCallback(nil, nil, nil, nil, nil); //Call manually to update preferences once.
+    prefsChangedCallback(nil, nil, nil, nil, nil);
 
-	if (prefsEnabled) {
-		%init(main);
-	}
+    if (prefsEnabled) {
+        %init(main);
+    }
 }
