@@ -18,6 +18,6 @@ ADDITIONAL_OBJCFLAGS = -fobjc-arc
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 after-install::
-	install.exec "killall -9 Music~iphone; killall -9 Preferences"
+	install.exec "killall -9 Music; killall -9 Preferences"
 # SUBPROJECTS += crossfademusicprefshook
 include $(THEOS_MAKE_PATH)/aggregate.mk
