@@ -104,7 +104,7 @@ CRHelper *_helper = nil;
         AVMutableAudioMixInputParameters *audioInputParams = [AVMutableAudioMixInputParameters audioMixInputParameters];
         [audioInputParams setVolumeRampFromStartVolume:0.0
                                            toEndVolume:1.0
-                                              timeRange:CMTimeRangeMake(CMTimeMakeWithSeconds(0, 1), CMTimeMakeWithSeconds(7, 1))];
+                                              timeRange:CMTimeRangeMake(CMTimeMakeWithSeconds(0, 1), CMTimeMakeWithSeconds(7, 1))]; // hope to change this with a slider in the next version
         [audioInputParams setTrackID:[track trackID]];
         [allAudioParams addObject:audioInputParams];
     }
@@ -121,7 +121,7 @@ CRHelper *_helper = nil;
     
     // Calculate when the fade-out should start, i.e., 7 seconds before the end
     // Add a buffer, let's say, 1-2 seconds before the fade-out starts
-    CMTime fadeOutStartTime = CMTimeSubtract(totalDuration, CMTimeMakeWithSeconds(8, 600));  // 7 seconds fade + 1 second buffer
+    CMTime fadeOutStartTime = CMTimeSubtract(totalDuration, CMTimeMakeWithSeconds(10, 600));  // 9 seconds fade out + 1 buffer (hope to change this with a slider in the next update)
     
     NSArray *audioTracks = [bself.currentItem.asset tracksWithMediaType:AVMediaTypeAudio];
     NSMutableArray *allAudioParams = [NSMutableArray array];
@@ -132,14 +132,14 @@ CRHelper *_helper = nil;
         // Set the fade-out to go from full volume to 0, starting at fadeOutStartTime and lasting 7 seconds
         [audioInputParams setVolumeRampFromStartVolume:1.0
                                            toEndVolume:0.0
-                                              timeRange:CMTimeRangeMake(fadeOutStartTime, CMTimeMakeWithSeconds(7, 600))];
+                                              timeRange:CMTimeRangeMake(fadeOutStartTime, CMTimeMakeWithSeconds(9, 600))]; //hope to change this in the next update with a slider to change how long each fade will be
         [audioInputParams setTrackID:[track trackID]];
         [allAudioParams addObject:audioInputParams];
     }
 
-    AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
-    [audioMix setInputParameters:allAudioParams];
-    [bself.currentItem setAudioMix:audioMix];
+    //AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+    //[audioMix setInputParameters:allAudioParams];
+    //[bself.currentItem setAudioMix:audioMix];
 }
 
 @end
