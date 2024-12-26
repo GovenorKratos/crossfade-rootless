@@ -3,6 +3,7 @@ iOS native music cross-fade. Fixed for iOS 16 with the help of ChatGPT. I merely
 
 Tested on:
 iOS 14.4.2 on an iPhone 7
+
 iOS 16.0.2 on an iPhone 13
 
 ~~Cydia tweak. [Repo](https://h6nry.github.io/repo/)~~ this was for the rootful version.
